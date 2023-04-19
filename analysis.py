@@ -75,10 +75,12 @@ def calculate_user_transactions(
 def my_analysis(context: any, scope: list = None) -> None:
     # Transform all Environment Variable to JSON.
     environment = envToJson(context.environment)
+
     if not environment.get("account_token"):
         raise ValueError(
             "You must setup an account_token in the Environment Variables."
         )
+
     elif not environment.get("device_token"):
         raise ValueError("You must setup an device_token in the Environment Variables.")
 
@@ -98,17 +100,22 @@ def my_analysis(context: any, scope: list = None) -> None:
             "amount": 10000,
         }
     )
+
     grouped_device_list = {}
+
     for device in device_list:
         tag_value = None
+
         for tag in device["tags"]:
             if tag["key"] == tag_to_search:
                 tag_value = tag["value"]
                 break
+
         if tag_value:
             if tag_value not in grouped_device_list:
                 grouped_device_list[tag_value] = []
             grouped_device_list[tag_value].append(device)
+
     grouped_device_list = [
         {"value": key, "device_list": value}
         for key, value in grouped_device_list.items()
