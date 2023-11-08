@@ -19,29 +19,23 @@ Steps to generate an account_token:
 4 - Generate a new Token with Expires Never.
 5 - Press the Copy Button and place at the Environment Variables tab of this analysis.
 """
-from tagoio_sdk import Analysis, Account, Device
+from tagoio_sdk import Analysis, Resources, Device
 from tagoio_sdk.modules.Utils.envToJson import envToJson
 
 
 def calculate_user_transactions(
-    account: Account, storage: Device, user_value: str, device_list: list
+    storage: Device, tag_value: str, device_list: list, account_token: str
 ) -> None:
     # Collect the data amount for each device.
     # Result of bucket_results is:
     # [0, 120, 500, 0, 1000]
-    for device in device_list:
-        total_transactions = account.buckets.amount(device["bucket"])
+    resources = Resources(params={"token": account_token})
 
-        # Get the total transactions of the last analysis run.
-        # Group is used to get only for this user.
-        # You can change that to get a specific device for the user, instead of using a global storage device.
-        # One way to do that is by just finding the device using a tag, see example:
-        #
-        # [user_device] = account.devices.list({'page': 1, 'fields': ['id', 'name', 'bucket', 'tags'], 'filter': {'tags': [{'key': 'user_device', 'value': user_value}]}, 'amount': 1})
-        # device_token = Utils.getTokenByName(account, user_device['id'])
-        # storage = Device({'token': device_token})
+    for device in device_list:
+        total_transactions = resources.buckets.amount(device["bucket"])
+
         last_total_transactions = storage.getData(
-            {"variable": "last_transactions", "qty": 1, "group": user_value}
+            {"variable": "last_transactions", "qty": 1, "group": tag_value}
         )
 
         if not last_total_transactions:
@@ -55,17 +49,9 @@ def calculate_user_transactions(
         # Now you can just plot these variables in a dynamic table.
         storage.sendData(
             data=[
-                {
-                    "variable": "last_transactions",
-                    "value": total_transactions,
-                    "group": user_value,
-                },
-                {
-                    "variable": "transactions_result",
-                    "value": result,
-                    "group": user_value,
-                },
-                {"variable": "user", "value": user_value, "group": user_value},
+                {"variable": "last_transactions", "value": total_transactions, "group": tag_value},
+                {"variable": "transactions_result", "value": result, "group": tag_value},
+                {"variable": "device_id", "value": device["id"], "group": tag_value},
             ]
         )
 
@@ -76,59 +62,45 @@ def my_analysis(context: any, scope: list = None) -> None:
     # Transform all Environment Variable to JSON.
     environment = envToJson(context.environment)
 
-    if not environment.get("account_token"):
-        raise ValueError(
-            "You must setup an account_token in the Environment Variables."
-        )
+    if not environment.get("device_token") and not environment.get("account_token"):
+        raise ValueError("You must setup an device_token and account_token in the Environment Variables.")
 
-    elif not environment.get("device_token"):
-        raise ValueError("You must setup an device_token in the Environment Variables.")
-
-    # Instance the account class
-    account = Account(params={"token": environment["account_token"]})
     storage = Device(params={"token": environment["device_token"]})
 
-    # Setup the tag we will be searching in the device list
-    tag_to_search = "user_email"
-
     # Get the device_list and group it by the tag value.
-    device_list = account.devices.listDevice(
+    resources = Resources()
+    device_list = resources.devices.listDevice(
         {
             "page": 1,
             "fields": ["id", "name", "bucket", "tags"],
-            "filter": {"tags": [{"key": tag_to_search}]},
+            "filter": {"tags": [{"key": "device_type", "value": "organization"}]},
             "amount": 10000,
         }
     )
 
-    grouped_device_list = {}
+    # Setup the tag we will be searching in the device list
+    tag_value_search = "1234"
+
+    group_device_list = []
 
     for device in device_list:
-        tag_value = None
+        # Check if the device has the tag we are searching for - org_id = 1234
+        has_tag = list(filter(lambda tags: tags["key"] == "org_id" and tags["value"] == tag_value_search, device['tags']))
 
-        for tag in device["tags"]:
-            if tag["key"] == tag_to_search:
-                tag_value = tag["value"]
-                break
+        if not has_tag:
+            print(f"Device - {device['name']} does not have the tag org_id value {tag_value_search}")
+            continue
 
-        if tag_value:
-            if tag_value not in grouped_device_list:
-                grouped_device_list[tag_value] = []
-            grouped_device_list[tag_value].append(device)
+        group_device_list.append(device)
 
-    grouped_device_list = [
-        {"value": key, "device_list": value}
-        for key, value in grouped_device_list.items()
-    ]
 
-    # Call a new function for each group in assynchronous way.
     calculate_user_transactions(
-        account=account,
         storage=storage,
-        user_value=grouped_device_list[0]["value"],
-        device_list=grouped_device_list[0]["device_list"],
+        tag_value=tag_value_search,
+        device_list=group_device_list,
+        account_token=environment["account_token"],
     )
 
 
 # The analysis token in only necessary to run the analysis outside TagoIO
-Analysis(params={"token": "MY-ANALYSIS-TOKEN-HERE"}).init(my_analysis)
+Analysis.use(my_analysis, params={"token": "MY-ANALYSIS-TOKEN-HERE"})
